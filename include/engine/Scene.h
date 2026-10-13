@@ -9,6 +9,10 @@
 // 这里只用到指针，不需要完整类型，避免两个头文件互相包含
 class SceneManager;
 
+// 前置声明：音效系统由 onEnter 注入（完整定义见 engine/AudioSystem.h）。
+// 这里同样只以引用/指针形式出现，不需要完整类型
+class AudioSystem;
+
 // ============================================================
 // Scene：场景基类（引擎层）
 // ============================================================
@@ -41,6 +45,12 @@ class SceneManager;
 //   里把关心的项读进自己的成员，之后每帧逻辑（update/restart）使用成员，
 //   无需再触碰配置文件。
 //
+// 为什么 onEnter 还要拿到 AudioSystem：
+//   音效是「动作式」能力：场景只在事件发生时（收币/暂停/结束等）调用
+//   play(id)，不需要数据副本。所有权在 GameDev（生命周期覆盖全部场景），
+//   经 SceneManager 在场景上位时原样转发——与 Config 走同一条注入管线；
+//   场景保存其指针，供后续 handleEvent/update 中随时触发播放。
+//
 // 场景切换请求：
 //   场景通过 m_sceneManager（由 SceneManager 在场景上位时注入）调用
 //   requestScene(...) 请求切换；真正切换由 SceneManager 在帧末统一结算
@@ -59,8 +69,10 @@ public:
 
     // 进入场景：保存 renderer、读取配置、加载本场景所需资源。
     // config 由 SceneManager 注入（应用启动时加载好的只读数据）；
+    // audio 是音效系统的注入入口（与 config 同一模式：所有权在 GameDev，
+    // 场景只借用指针，用于触发收币/开始/结束/暂停等音效）。
     // 默认空实现：没有资源和配置需求的场景可以不覆写
-    virtual void onEnter(SDL_Renderer* /*renderer*/, const Config& /*config*/) {}
+    virtual void onEnter(SDL_Renderer* /*renderer*/, const Config& /*config*/, AudioSystem& /*audio*/) {}
 
     // 离开场景：切换前的收尾钩子。本项目的场景资源在析构中释放，
     // 默认空实现即可；将来需要「离开时存档」等逻辑时可以覆写

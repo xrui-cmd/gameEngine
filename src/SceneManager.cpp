@@ -1,9 +1,10 @@
 #include "engine/SceneManager.h"
 
-// 构造：绑定 renderer 与配置。SceneManager 只借用两者，不持有所有权
-SceneManager::SceneManager(SDL_Renderer* renderer, const Config& config)
+// 构造：绑定 renderer、配置与音效系统。SceneManager 只借用三者，不持有所有权
+SceneManager::SceneManager(SDL_Renderer* renderer, const Config& config, AudioSystem& audio)
     : m_renderer(renderer) // 初始化列表写入成员：构造完成后立即可用于场景切换
     , m_config(config)     // 配置只读引用：生命周期由 GameDev 保证
+    , m_audio(audio)       // 音效系统引用：生命周期同样由 GameDev 保证
 {
 }
 
@@ -42,8 +43,9 @@ void SceneManager::applyPendingChange()
     m_currentScene = std::move(m_pendingScene);
     // 注入管理器自身：场景拿到它才能请求下一次切换（如菜单 -> 对局）
     m_currentScene->setSceneManager(this);
-    // 入场加载：renderer 与配置已绑定，场景在此加载纹理、读取配置并完成初始布置
-    m_currentScene->onEnter(m_renderer, m_config);
+    // 入场加载：renderer、配置与音效系统已绑定，场景在此加载纹理、
+    // 读取配置、保存音效系统指针并完成初始布置
+    m_currentScene->onEnter(m_renderer, m_config, m_audio);
 }
 
 // 释放全部场景：退出前必须调用（且必须在 renderer 销毁之前）
