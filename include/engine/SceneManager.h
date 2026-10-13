@@ -48,7 +48,7 @@ public:
     // ---- 以下三个转发给当前场景；场景为空时安全跳过 ----
     void handleEvent(const SDL_Event& event);
     void update(const UpdateContext& ctx);
-    void render();
+    void render(float alpha); // 携带插值系数（渲染帧在两次固定步之间的进度）
 
 private:
     SDL_Renderer* m_renderer = nullptr; // 加载场景资源用的渲染器（只借用，不持有所有权）

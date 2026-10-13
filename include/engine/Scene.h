@@ -74,8 +74,10 @@ public:
     virtual void update(const UpdateContext& /*ctx*/) {}
 
     // 每帧渲染：用 onEnter 保存的 renderer 绘制本场景内容。
+    // alpha 是「渲染时刻在两次固定步之间的进度」[0,1)，有实体的场景
+    // 用它做位置插值（见 Entity::render）；纯静态界面（如菜单）可以忽略。
     // 约定：只负责「画」，不调用 SDL_RenderPresent（提交由外壳统一做）
-    virtual void render() {}
+    virtual void render(float /*alpha*/) {}
 
 protected:
     // 注入的场景管理器：由 SceneManager 在场景上位时设置，

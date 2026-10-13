@@ -15,18 +15,20 @@
 //   2. 纹理生命周期：release() 幂等释放；析构函数自动兜底调用
 //   3. 帧动画：时间轴 m_animTime + 帧号换算（与渲染帧率解耦）
 //   4. 三级回退加载：精灵表 -> 单帧图 -> 程序化纯色（收敛为辅助方法）
+//   5. 插值渲染：记录「上一固定步位置」m_prevX/m_prevY，render 按 alpha
+//      在 prev->cur 之间线性插值（详见 render 与 snapshotPreviousPosition）
 //
 // 统一动画语义（与原先 Player/Coin 的规则完全一致）：
-//   m_animTime 按真实时间累加；帧号 = int(m_animTime / m_frameTime) % m_frameCount
+//   m_animTime 按固定步长累加；帧号 = int(m_animTime / m_frameTime) % m_frameCount
 //   这个公式只出现在基类 render 里一处；m_frameCount == 1 时帧号恒为 0，
 //   srcRect 即整张图——单帧图 / 程序化回退天然退化为静止画面，无需特判。
 //
 // 子类手册：
 //   - 构造时固定 m_w/m_h（尺寸的唯一定义处，不再散落在成员默认值里）
 //   - load() 只提供素材路径、帧参数与回退颜色，其余交给基类辅助方法
-//   - 需要自定义行为时覆写 update：默认实现＝无条件推进帧动画，
-//     适合金币这类「永远在转」的实体；玩家「移动才播」则需要覆写
-//   - render 默认按当前帧绘制，绝大多数实体直接继承即可
+//   - 需要自定义行为时覆写 update：第一行必须调用 snapshotPreviousPosition()，
+//     默认实现（无条件推进帧动画）已包含该调用
+//   - render 默认按插值位置绘制，绝大多数实体直接继承即可
 // ============================================================
 
 class Entity
@@ -43,17 +45,32 @@ public:
     void release();
 
     // 每帧更新实体状态。默认实现：无条件推进帧动画时间轴（金币旋转等）；
-    // 需要「按输入/条件驱动」的实体（如玩家移动）由子类覆写
+    // 需要「按输入/条件驱动」的实体（如玩家移动）由子类覆写。
+    // 注意：覆写时必须在本函数第一行调用 snapshotPreviousPosition()，
+    // 否则渲染插值拿不到「这一步开始前的位置」
     virtual void update(const UpdateContext& ctx);
 
-    // 按当前帧把纹理绘制到当前位置；不修改自身数据，因此是 const 方法。
-    // 默认实现已覆盖「从横向精灵表裁当前帧 -> 画到 (m_x, m_y)」的全部逻辑
-    virtual void render(SDL_Renderer* renderer) const;
+    // 按「上一固定步位置 <-> 当前位置」的线性插值绘制；alpha 是两步之间
+    // 的进度 [0,1)。不修改自身数据（rect() 等碰撞查询仍用逻辑位置），
+    // 因此是 const 方法。默认实现已覆盖「从精灵表裁当前帧 -> 画到插值位置」
+    virtual void render(SDL_Renderer* renderer, float alpha) const;
 
-    // 返回实体当前的轴对齐矩形（位置 + 尺寸的副本），供 AABB 碰撞检测使用
+    // 返回实体当前的轴对齐矩形（位置 + 尺寸的副本），供 AABB 碰撞检测使用。
+    // 注意返回的是「逻辑位置」而不是插值后的渲染位置：碰撞在固定步内
+    // 用确定的状态判定，与渲染平滑完全解耦
     SDL_FRect rect() const;
 
-    // 把左上角瞬间移动到 (x, y)：不经过速度/时间累积，重开归位等场景使用
+    // 把「上一固定步位置」对齐到「当前位置」（快照）。
+    // 两类调用时机，缺一不可：
+    //   1. 固定步 update 的第一行（含子类覆写）：本步结束后的新位置
+    //      与开头的旧位置构成插值区间，渲染才能平滑过渡；
+    //   2. 瞬移类操作之后：setPosition 内部已自动对齐；自定义瞬移
+    //      （如 Coin::respawn 的随机落点）必须在落点定稿后手动调用，
+    //      否则插值会从瞬移前的位置「拉丝」滑到新位置，出现拖影
+    void snapshotPreviousPosition();
+
+    // 把左上角瞬间移动到 (x, y)：不经过速度/时间累积，重开归位等场景使用。
+    // 内部同步插值快照（prev=cur），保证瞬移不会在渲染上产生拉丝
     void setPosition(float x, float y);
 
     // 覆盖帧动画的每帧时长（秒）：场景用配置值调整动画节奏时调用。
@@ -81,10 +98,16 @@ protected:
                                  SDL_Color fallbackColor); // 程序化回退颜色（RGBA）
 
     // ---------- 空间数据（protected：派生类的 update 需要直接读写） ----------
-    float m_x = 0.0f; // 左上角 x 坐标（像素）
-    float m_y = 0.0f; // 左上角 y 坐标（像素）
+    float m_x = 0.0f; // 左上角 x 坐标（像素，当前固定步的逻辑位置）
+    float m_y = 0.0f; // 左上角 y 坐标（像素，当前固定步的逻辑位置）
     float m_w = 0.0f; // 宽（像素），由派生类构造时固定
     float m_h = 0.0f; // 高（像素），由派生类构造时固定
+
+    // ---------- 插值渲染数据 ----------
+    // 上一固定步的位置：update 开头快照、瞬移操作后同步（见
+    // snapshotPreviousPosition 的说明）。render 用 prev->cur 做线性插值
+    float m_prevX = 0.0f; // 上一固定步的 x（插值起点；初值 0 与 cur 一致）
+    float m_prevY = 0.0f; // 上一固定步的 y（同上）
 
     // ---------- 渲染数据 ----------
     SDL_Texture* m_texture = nullptr; // 纹理；load 成功后非空，未加载时为 nullptr

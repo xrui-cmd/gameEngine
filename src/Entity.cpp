@@ -22,14 +22,19 @@ void Entity::release()
 
 // 默认更新：无条件推进帧动画时间轴。
 // 累加动作与「当前显示第几帧」无关，帧号换算发生在 render；
-// 这样即使某帧渲染耗时波动，动画速度也只由真实时间决定（帧率解耦）
+// 这样即使渲染帧耗时波动，动画速度也只由固定步长决定（帧率解耦）
 void Entity::update(const UpdateContext& ctx)
 {
-    m_animTime += ctx.deltaTime; // 累加真实流逝秒数；不取模，保持逻辑最简
+    // 第一行固定动作：把上一步的位置存为插值起点。
+    // 子类覆写 update 时也必须先调用它，否则 prev 会落后于 cur，
+    // 渲染插值区间错误（画面滞后一步或抖动）
+    snapshotPreviousPosition();
+
+    m_animTime += ctx.deltaTime; // 累加固定步时长；不取模，保持逻辑最简
 }
 
-// 按当前帧把纹理绘制到当前位置
-void Entity::render(SDL_Renderer* renderer) const
+// 按「上一固定步位置 <-> 当前位置」的线性插值绘制
+void Entity::render(SDL_Renderer* renderer, float alpha) const
 {
     // 纹理尚未加载成功时直接返回，避免空指针导致崩溃
     if (m_texture == nullptr)
@@ -37,11 +42,18 @@ void Entity::render(SDL_Renderer* renderer) const
         return; // 未加载就没有可绘制的内容
     }
 
+    // ==== 插值位置计算（本次改造的核心渲染逻辑） ====
+    // alpha=0 时取上一固定步的坐标，alpha 趋近 1 时取当前坐标；
+    // 两点之间线性过渡，把逻辑步（120Hz）的离散位移铺成渲染帧上的平滑运动。
+    // 注意：这只影响「画在哪」，碰撞用的 rect() 仍然返回 m_x/m_y 逻辑位置
+    const float renderX = m_prevX + (m_x - m_prevX) * alpha; // 插值后的绘制 x
+    const float renderY = m_prevY + (m_y - m_prevY) * alpha; // 插值后的绘制 y
+
     // 目标矩形：纹理画在屏幕上的位置和尺寸（碰撞盒语义与动画无关，恒为 m_w x m_h）
-    const SDL_FRect dst{ m_x, m_y, m_w, m_h };
+    const SDL_FRect dst{ renderX, renderY, m_w, m_h };
 
     // ==== 固定帧时长与渲染帧率解耦的帧号换算 ====
-    // 用「累计真实时间 / 每帧时长」向下取整得到帧号：时间攒够 m_frameTime 秒
+    // 用「累计逻辑时间 / 每帧时长」向下取整得到帧号：时间攒够 m_frameTime 秒
     // 就切到下一帧，与渲染帧率（60Hz/144Hz、甚至偶发卡顿）完全无关；
     // 再对总帧数取模实现循环播放（最后一帧播完回到第 1 帧）。
     // m_frameCount == 1 时结果恒为 0——单帧图与程序化回退自然退化为静止绘制
@@ -55,18 +67,33 @@ void Entity::render(SDL_Renderer* renderer) const
     SDL_RenderTexture(renderer, m_texture, &src, &dst);
 }
 
-// 返回当前位置与尺寸组成的矩形副本：AABB 碰撞判定和重生避让都依赖它
+// 返回当前位置与尺寸组成的矩形副本：AABB 碰撞判定和重生避让都依赖它。
+// 刻意使用逻辑位置 m_x/m_y（而非 render 的插值位置）：碰撞在固定步内
+// 用确定状态判定，渲染平滑不参与玩法
 SDL_FRect Entity::rect() const
 {
     // SDL_FRect 用 x,y（左上角）+ w,h（宽高）描述轴对齐矩形
     return SDL_FRect{ m_x, m_y, m_w, m_h };
 }
 
+// 把「上一固定步位置」对齐到「当前位置」。
+// 调用约定见头文件：update 首行 + 瞬移之后，两处都调用同一条语句——
+// 前者让本步的新位置形成 prev->cur 插值区间；后者消除插值距离防拉丝
+void Entity::snapshotPreviousPosition()
+{
+    m_prevX = m_x; // 插值起点对齐到当前 x
+    m_prevY = m_y; // 插值起点对齐到当前 y
+}
+
 // 瞬间移动：直接覆盖坐标，不经过速度/时间累积，保证重开后位置确定
 void Entity::setPosition(float x, float y)
 {
-    m_x = x; // 覆盖 x 坐标
-    m_y = y; // 覆盖 y 坐标
+    m_x = x; // 覆盖 x 坐标（当前逻辑位置）
+    m_y = y; // 覆盖 y 坐标（当前逻辑位置）
+
+    // 瞬移必须同步插值快照：否则渲染会从瞬移前的旧位置「拉丝」滑过来
+    //（重开归位、场景入场初始化等路径都会经过这里）
+    snapshotPreviousPosition();
 }
 
 // 覆盖帧动画的每帧时长：配置驱动的动画节奏入口（如 coin_anim_interval）

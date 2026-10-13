@@ -76,12 +76,13 @@ void SceneManager::update(const UpdateContext& ctx)
     }
 }
 
-// 转发渲染：只画当前场景，不负责 SDL_RenderPresent（由应用外壳统一提交）
-void SceneManager::render()
+// 转发渲染：只画当前场景，不负责 SDL_RenderPresent（由应用外壳统一提交）。
+// alpha 是插值系数，原样透传给场景——有实体的场景用它平滑绘制
+void SceneManager::render(float alpha)
 {
     // 只有持有场景时才转发；空场景表示应用尚未进入或已清场
     if (m_currentScene != nullptr)
     {
-        m_currentScene->render();
+        m_currentScene->render(alpha);
     }
 }
