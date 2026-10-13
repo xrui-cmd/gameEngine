@@ -3,6 +3,7 @@
 
 #include <SDL3/SDL.h>              // SDL_Renderer / SDL_Event：转发接口的基础类型
 #include <memory>                  // std::unique_ptr：场景的唯一所有权
+#include "engine/Config.h"         // Config：场景 onEnter 时注入的配置数据
 #include "engine/Scene.h"          // Scene：被管理的场景基类
 #include "engine/UpdateContext.h"  // UpdateContext：update 转发参数
 
@@ -17,7 +18,8 @@
 //   把切换动作推迟到帧末（所有场景回调都返回之后），旧场景再析构就安全。
 //
 // 资源生命周期：
-//   - SceneManager 构造时绑定 renderer（场景 onEnter 需要它加载纹理）
+//   - SceneManager 构造时绑定 renderer 与配置（场景 onEnter 需要它们
+//     加载纹理、读取可调数值）
 //   - 切换流程：旧场景 onExit -> 旧场景立刻析构（此时 renderer 尚在，
 //     它的纹理安全释放）-> 新场景 onEnter（加载新资源）
 //   - 退出流程：外壳在销毁 renderer 之前调用 clear()，保证全部场景
@@ -27,8 +29,9 @@
 class SceneManager
 {
 public:
-    // 构造时绑定渲染器：之后每次场景切换，新场景都能立即拿到它加载资源
-    explicit SceneManager(SDL_Renderer* renderer);
+    // 构造时绑定渲染器与配置：之后每次场景切换，新场景的 onEnter
+    // 都能立即拿到它们加载资源、读取可调数值
+    explicit SceneManager(SDL_Renderer* renderer, const Config& config);
 
     // 请求切换场景（只登记，不立即执行）。
     // 真正切换发生在帧末的 applyPendingChange()，原因见文件顶部说明
@@ -49,6 +52,10 @@ public:
 
 private:
     SDL_Renderer* m_renderer = nullptr; // 加载场景资源用的渲染器（只借用，不持有所有权）
+
+    // 配置数据的只读引用：所有权在 GameDev（其生命周期覆盖本管理器），
+    // 这里仅借用；每次场景 onEnter 时原样转发
+    const Config& m_config;
 
     std::unique_ptr<Scene> m_currentScene; // 当前正在运行的场景
     std::unique_ptr<Scene> m_pendingScene; // 已请求、等待帧末结算的新场景

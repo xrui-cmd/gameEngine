@@ -69,6 +69,21 @@ void Entity::setPosition(float x, float y)
     m_y = y; // 覆盖 y 坐标
 }
 
+// 覆盖帧动画的每帧时长：配置驱动的动画节奏入口（如 coin_anim_interval）
+void Entity::setFrameTime(float frameTime)
+{
+    // 帧号换算 = 累计时间 / 每帧时长：非正值（0、负数）会让换算结果无意义，
+    // 属于配置错误。忽略设置并警告，保持原帧时长继续工作，避免动画坏掉
+    if (frameTime <= 0.0f)
+    {
+        SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                    "帧时长必须为正数（收到 %f），忽略该配置", frameTime);
+        return;
+    }
+
+    m_frameTime = frameTime; // 覆盖每帧时长：下一帧 render 的帧号换算立即生效
+}
+
 // 三级回退纹理加载：把原先 Player/Coin 各自复制的加载流程收敛到这里。
 // 加载顺序：精灵表 -> 单帧图 -> 程序化纯色，逐级降级并记录警告
 bool Entity::loadTextureWithFallback(SDL_Renderer* renderer,

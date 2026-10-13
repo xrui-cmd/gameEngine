@@ -2,6 +2,7 @@
 #define __SCENE_H__
 
 #include <SDL3/SDL.h>             // SDL_Renderer / SDL_Event：场景接口的基础类型
+#include "engine/Config.h"        // Config：onEnter 注入的配置数据（可调数值的读取入口）
 #include "engine/UpdateContext.h" // UpdateContext：update 的「世界上下文」参数
 
 // 前置声明：场景通过管理器请求切换（完整定义见 engine/SceneManager.h）。
@@ -22,7 +23,8 @@ class SceneManager;
 //     SceneManager，由它再转发给当前场景
 //
 // 生命周期约定（由 SceneManager 保证调用时机）：
-//   onEnter     进入场景时调用一次：保存 renderer、加载本场景纹理资源
+//   onEnter     进入场景时调用一次：保存 renderer、读取配置、加载本场景
+//               纹理资源
 //   onExit      离开场景时调用一次：收尾钩子（本项目的资源释放放在
 //               析构里，默认空实现即可满足；将来需要再覆写）
 //   handleEvent/update/render  每帧转发；MenuScene 这类无逻辑场景
@@ -32,6 +34,12 @@ class SceneManager;
 //   纹理由 renderer 创建、也必须先于 renderer 销毁；场景保存 renderer
 //   指针用于「每次进入时加载」。确实需要窗口信息时，可以用
 //   SDL_GetRenderWindow(renderer) 反查（PlayScene 就是这样做的）。
+//
+// 为什么 onEnter 还要拿到 Config：
+//   场景是「可调数值」的消费方（如对局时长、金币数量）。配置由应用外壳
+//   在启动时加载一次，经 SceneManager 在场景上位时注入——场景在 onEnter
+//   里把关心的项读进自己的成员，之后每帧逻辑（update/restart）使用成员，
+//   无需再触碰配置文件。
 //
 // 场景切换请求：
 //   场景通过 m_sceneManager（由 SceneManager 在场景上位时注入）调用
@@ -49,9 +57,10 @@ public:
     // 场景借此请求切换到别的场景（如菜单按 Enter 后进入对局）
     void setSceneManager(SceneManager* manager) { m_sceneManager = manager; }
 
-    // 进入场景：保存 renderer、加载本场景所需资源。
-    // 默认空实现：没有资源的场景可以不覆写
-    virtual void onEnter(SDL_Renderer* /*renderer*/) {}
+    // 进入场景：保存 renderer、读取配置、加载本场景所需资源。
+    // config 由 SceneManager 注入（应用启动时加载好的只读数据）；
+    // 默认空实现：没有资源和配置需求的场景可以不覆写
+    virtual void onEnter(SDL_Renderer* /*renderer*/, const Config& /*config*/) {}
 
     // 离开场景：切换前的收尾钩子。本项目的场景资源在析构中释放，
     // 默认空实现即可；将来需要「离开时存档」等逻辑时可以覆写

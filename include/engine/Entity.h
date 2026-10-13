@@ -56,6 +56,11 @@ public:
     // 把左上角瞬间移动到 (x, y)：不经过速度/时间累积，重开归位等场景使用
     void setPosition(float x, float y);
 
+    // 覆盖帧动画的每帧时长（秒）：场景用配置值调整动画节奏时调用。
+    // 应在 load() 之后调用——load 会先把内置默认帧时长写入该字段，配置值
+    // 晚一步落定才能覆盖它。非正值会被忽略并警告（帧号换算以它为除数）
+    void setFrameTime(float frameTime);
+
     // 尺寸便捷查询（重开归位时计算窗口居中位置在用）
     float width() const { return m_w; }  // 宽（像素）
     float height() const { return m_h; } // 高（像素）
