@@ -46,7 +46,7 @@ struct MIX_Mixer; // 混音器：持有音频设备与全部轨道
 struct MIX_Audio; // 已解码音频：一个 WAV 文件对应一个实例
 struct MIX_Track; // 播放轨道：把音频「送到」混音器输出
 
-// 音效 ID：与 assets/sounds/ 下的五个 WAV 文件一一对应。
+// 音效 ID：与 assets/sounds/ 下的六个 WAV 文件一一对应。
 // 用强类型枚举而不是裸字符串/整数：调用处写 SoundId::Coin 有编译期检查，
 // 打错名字直接编译失败，重命名音效也能一键全改
 enum class SoundId
@@ -55,7 +55,8 @@ enum class SoundId
     Start,    // 开始/确认（600->900Hz 上扬，约 120ms）
     GameOver, // 本局结束（440->330->220Hz 三连下行，约 600ms）
     Pause,    // 暂停/恢复轻音（660Hz，约 80ms）
-    Hit       // 被敌人撞中（160->70Hz 低频下行「闷响」，约 150ms）
+    Hit,      // 被敌人撞中（160->70Hz 低频下行「闷响」，约 150ms）
+    Record    // 打破最高分纪录（C5->E5->G5 上行三连音琶音，约 300ms）
 };
 
 class AudioSystem
@@ -73,7 +74,7 @@ public:
     AudioSystem& operator=(const AudioSystem&) = delete; // 删除拷贝赋值
 
     // 初始化音效系统：MIX_Init -> 创建混音器/打开默认播放设备 -> 预加载
-    // 五个 WAV -> 建立轨道。返回是否「设备就绪」：
+    // 六个 WAV -> 建立轨道。返回是否「设备就绪」：
     //   - 任一前置环节失败（无设备等）返回 false 并已警告一次，游戏降级静默；
     //   - 单个音效文件缺失/损坏不影响返回值（逐项降级，其余照常）。
     // 幂等：重复调用会先释放旧资源再重新初始化
@@ -98,7 +99,7 @@ public:
 private:
     // 音效总数：与 SoundId 枚举成员数、assets/sounds/ 文件数三者一致，
     // 增删音效时三处同步修改（编译器会拦截枚举与数组不一致的疏漏）
-    static constexpr int kSoundCount = 5;
+    static constexpr int kSoundCount = 6;
 
     // 一个音效的运行时资源组：解码数据 + 播放轨道。
     // 分开持有的原因：MIX_Audio 是「数据」，MIX_Track 是「播放器」；
@@ -118,7 +119,7 @@ private:
 private:
     MIX_Mixer* m_mixer = nullptr; // 混音器（持有音频设备）；空 = 未就绪/已降级
 
-    // 五个音效的资源组：下标与 SoundId 强转的整数值一一对应，
+    // 六个音效的资源组：下标与 SoundId 强转的整数值一一对应，
     // 一次初始化后内容固定（加载失败项保持空，play 时静默跳过）
     Sound m_sounds[kSoundCount];
 

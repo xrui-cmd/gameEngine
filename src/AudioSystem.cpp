@@ -45,7 +45,7 @@ bool AudioSystem::initialize()
     }
 
     // 3) 定位素材目录：与图片/字体同一模式——以 exe 所在目录为基准，
-    //    拼接 <exe目录>/assets/sounds/<文件名>。拿不到基路径时五个音效
+    //    拼接 <exe目录>/assets/sounds/<文件名>。拿不到基路径时六个音效
     //    全部走"逐项加载失败"分支，设备仍可用（返回值保持 true）
     const char* basePath = SDL_GetBasePath();
     if (basePath == nullptr)
@@ -56,9 +56,9 @@ bool AudioSystem::initialize()
         return true; // 设备就绪，但没有任何音效——play 会安全静默
     }
 
-    // 4) 预加载五个音效并逐一建立播放轨道。任何一项失败都只警告并跳过
+    // 4) 预加载六个音效并逐一建立播放轨道。任何一项失败都只警告并跳过
     //    该项（逐个降级），不放倒整个系统——例如只缺 coin.wav 时，
-    //    其余四个音效照常工作，游戏流程完全不受影响
+    //    其余五个音效照常工作，游戏流程完全不受影响
     for (int i = 0; i < kSoundCount; ++i)
     {
         // 当前项的音效 ID（枚举强转）：同时用于取文件名与日志短名
@@ -211,6 +211,8 @@ const char* AudioSystem::soundName(SoundId id)
         return "pause";     // 与 assets/sounds/pause.wav 同名
     case SoundId::Hit:      // 被敌人撞中
         return "hit";       // 与 assets/sounds/hit.wav 同名
+    case SoundId::Record:   // 打破最高分纪录
+        return "record";    // 与 assets/sounds/record.wav 同名
     }
 
     // 防御分支：未知 ID（理论上不可能到达）给占位名，
@@ -234,6 +236,8 @@ const char* AudioSystem::soundFileName(SoundId id)
         return "pause.wav"; // 660Hz 轻短提示
     case SoundId::Hit:      // 命中音效文件
         return "hit.wav";   // 160->70Hz 低频下行「闷响」
+    case SoundId::Record:   // 破纪录音效文件
+        return "record.wav"; // C5->E5->G5 上行三连音琶音
     }
 
     // 防御分支：未知 ID 返回一个必然加载失败的名字（该音效不会存在），
