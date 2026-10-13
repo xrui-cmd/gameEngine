@@ -1,0 +1,13 @@
+# CMake / IDE 独立构建输出目录
+out/
+build/
+
+# MSVC 编译中间产物与调试文件
+*.obj
+*.exe
+*.pdb
+*.ilk
+
+# Visual Studio 用户级设置与隐藏工作目录
+*.user
+.vs/
