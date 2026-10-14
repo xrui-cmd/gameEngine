@@ -199,3 +199,29 @@ float Config::getFloat(const std::string& key, float defaultValue) const
 
     return value; // 解析成功：返回配置值
 }
+
+// 读取字符串配置项：缺键或空值回退默认值；正常值直接返回解析表里的原文
+// （解析阶段已去掉值两侧空白），供输入绑定等字符串型配置使用
+std::string Config::getString(const std::string& key, const std::string& defaultValue) const
+{
+    // 第一步：查找键
+    const auto it = m_values.find(key);
+    if (it == m_values.end())
+    {
+        // 缺键：警告并回退默认值（容错风格与 getInt/getFloat 一致）
+        SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                    "配置项 %s 不存在，使用默认值 \"%s\"", key.c_str(), defaultValue.c_str());
+        return defaultValue;
+    }
+
+    // 第二步：空值检查。形如 "key=" 的配置没有任何可用内容，按缺失处理
+    //（数值键此时会走「非法值」分支，字符串键在这里显式拦截，语义对等）
+    if (it->second.empty())
+    {
+        SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                    "配置项 %s 的值为空，使用默认值 \"%s\"", key.c_str(), defaultValue.c_str());
+        return defaultValue;
+    }
+
+    return it->second; // 正常值：返回配置表中存储的字符串（按值拷贝，生命周期安全）
+}

@@ -17,7 +17,8 @@
 //   1. 解析与取值分离：loadFromFile 把文件解析成「键 -> 原始字符串」
 //      的表；真正的数值转换推迟到 getInt/getFloat 被调用时进行。
 //      好处是解析器不关心某个键「应该是什么类型」——同一个键由使用方
-//      决定按整数还是浮点读取。
+//      决定按整数还是浮点读取；字符串配置（getString）则直接取原文，
+//      三类读取方式共用同一套解析与容错。
 //   2. 容错优先：文件缺失、坏行、缺键、非法值都不致命——记录警告后
 //      回退到调用方给出的默认值，游戏永远能正常启动运行。
 //   3. 默认值由调用方传入（即原先的硬编码常量），不在 Config 内部
@@ -27,6 +28,7 @@
 //     Config config;
 //     config.loadFromFile(std::string(SDL_GetBasePath()) + "config/game.ini");
 //     const int width = config.getInt("window_width", 1280); // 缺键时回退 1280
+//     const std::string key = config.getString("input_move_up", "W"); // 缺键回退 "W"
 // ============================================================
 
 class Config
@@ -43,6 +45,11 @@ public:
 
     // 读取浮点配置项（"300" 这类整数写法同样接受）：缺键或非法时同 getInt
     float getFloat(const std::string& key, float defaultValue) const;
+
+    // 读取字符串配置项：缺键或值为空时，记录警告并返回 defaultValue。
+    // 为字符串型配置服务（如输入绑定的键名等「不参与数值转换」的文本）；
+    // 解析阶段已去除值两侧空白，读取方拿到的是干净文本
+    std::string getString(const std::string& key, const std::string& defaultValue) const;
 
 private:
     // 解析单行文本并写入 m_values：空行 / 注释行（; 或 # 开头）直接跳过，
