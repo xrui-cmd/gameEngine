@@ -20,13 +20,19 @@
 
 ### UpdateContext（固定步长世界上下文）
 
-- 把一次 `update` 所需的稳定环境打包成只读结构按值传递：固定步长 `deltaTime`、键盘状态、视口尺寸。
+- 把一次 `update` 所需的稳定环境打包成只读结构按值传递：固定步长 `deltaTime`、键盘状态（过渡期保留、迁移完成后移除）、视口尺寸、输入系统指针。
 - 固定步长主循环**不属于引擎**（由宿主实现）；引擎只提供这条「每步输入」契约——将来扩展字段（鼠标位置等）不会改动实体一方的调用形式。
+
+### Input（动作映射与边沿检测）
+
+- 把物理按键映射为语义动作：`bind("move_up", SDL_SCANCODE_W)`，重复绑定即改键；`held` / `pressed` / `released` 三种查询，未绑定动作一律安全返回 false。
+- 按渲染帧采样一次（`update`），同一帧内所有固定步共享同一份快照（边沿在整帧内可见）；`updateFromKeyArray` 供单元测试注入合成键盘状态，边沿检测无需窗口即可确定性验证。
 
 ### Config（数据驱动配置）
 
 - INI 风格键值解析：`;` / `#` 注释、空行、缺 `=` 的坏行全部容错（记录警告后跳过）。
 - 解析与取值分离（加载存字符串、读取才转数值）；默认值由调用方传入——文件缺失、缺键、非法值都不致命，游戏永远能正常启动。
+- 字符串读取：`getString` 直接取原文（缺键 / 空值回退调用方默认值），服务输入绑定等字符串型配置。
 
 ### AudioSystem（音效）
 
@@ -37,6 +43,11 @@
 
 - `Font`：SDL3_ttf 的 RAII 封装，支持 UTF-8 中文文本的加载 / 测量 / 绘制（含水平居中版）；加载失败后所有绘制调用安全跳过。
 - `DebugText`：header-only 的调试字体助手（SDL 内置 8x8 字体，仅 ASCII），采用屏幕像素坐标、内部自动处理渲染缩放。
+
+### Vec2（数学层起步）
+
+- header-only 的二维向量（`include/engine/math/`）：构造、加减、标量乘除、点积、长度 / 长度平方、归一化（零向量保护）、两点距离与线性插值。
+- 「一对浮点」的位置 / 速度 / 位移逐步收编为类型化运算；`Vec3` / `Mat4` 随 3D 需求到来再补，接口风格保持一致（架构红线①：header-only、渐进迁移）。
 
 ### Rect（碰撞工具）
 
@@ -51,16 +62,20 @@ GameEngine/
 │  ├─ Entity.h             # 实体基类：位置尺寸 / 帧动画 / 三级回退 / 插值快照
 │  ├─ Scene.h              # 场景基类：五个生命周期回调 + 注入接口
 │  ├─ SceneManager.h       # 场景管理器：唯一所有权 + 延迟切换 + 帧末结算
-│  ├─ UpdateContext.h      # 固定步长世界上下文（dt / 键盘 / 视口）
+│  ├─ UpdateContext.h      # 固定步长世界上下文（dt / 键盘 / 视口 / 输入系统）
+│  ├─ Input.h              # 输入系统：动作映射 / 改键 / 边沿检测（held/pressed/released）
 │  ├─ Config.h             # INI 风格配置解析（容错 + 默认值回退）
 │  ├─ AudioSystem.h        # 音效系统（RAII + 全链路降级）
 │  ├─ Font.h               # TTF 文本加载 / 测量 / 绘制（RAII）
 │  ├─ DebugText.h          # 调试文字助手（header-only，仅 ASCII）
-│  └─ Rect.h               # AABB 相交判定（header-only）
+│  ├─ Rect.h               # AABB 相交判定（header-only）
+│  └─ math/                # 数学层（header-only 起步）
+│     └─ Vec2.h            # 二维向量：算术 / 点积 / 长度 / 归一化 / 插值
 ├─ src/                    # 实现文件
 │  ├─ Entity.cpp           # 纹理回退 / 帧号换算 / 插值绘制
 │  ├─ SceneManager.cpp     # 延迟切换与事件 / 更新 / 渲染转发
 │  ├─ Config.cpp           # 逐行解析与坏行容错
+│  ├─ Input.cpp            # 动作绑定与边沿推进（update / updateFromKeyArray 同路径）
 │  ├─ AudioSystem.cpp      # SDL3_mixer 初始化 / 加载 / 播放 / 释放
 │  └─ Font.cpp             # SDL3_ttf 加载与文本绘制
 ├─ .gitignore              # 忽略构建产物（out/、build/、*.obj 等）
