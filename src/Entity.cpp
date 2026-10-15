@@ -1,5 +1,6 @@
 #include "engine/Entity.h"
 #include <SDL3_image/SDL_image.h> // IMG_LoadTexture：SDL3_image 提供的图片文件加载 API
+#include <algorithm>              // std::clamp：动画子区间与帧号的防御性夹取
 #include <string>                 // std::string：拼接素材文件的绝对路径
 
 // 析构：兜底释放纹理。
@@ -53,18 +54,50 @@ void Entity::render(SDL_Renderer* renderer, float alpha) const
     const SDL_FRect dst{ renderX, renderY, m_w, m_h };
 
     // ==== 固定帧时长与渲染帧率解耦的帧号换算 ====
-    // 用「累计逻辑时间 / 每帧时长」向下取整得到帧号：时间攒够 m_frameTime 秒
-    // 就切到下一帧，与渲染帧率（60Hz/144Hz、甚至偶发卡顿）完全无关；
-    // 再对总帧数取模实现循环播放（最后一帧播完回到第 1 帧）。
-    // m_frameCount == 1 时结果恒为 0——单帧图与程序化回退自然退化为静止绘制
-    const int frameIndex = static_cast<int>(m_animTime / m_frameTime) % m_frameCount;
+    // 用「累计逻辑时间 / 每帧时长」向下取整得到循环序号：时间攒够 m_frameTime
+    // 秒就切到下一帧，与渲染帧率（60Hz/144Hz、甚至偶发卡顿）完全无关。
+    // 序号再对「循环子区间的长度」取模 + 加区间起点，实现子区间内循环播放
+    //（默认子区间 = 全区间，即原有行为；first == last 时长度 1、帧号恒定，
+    // 为本批「跑动帧与站立帧拼一张表」提供定格能力）。
+    // m_frameCount == 1 时结果恒为起点 0——单帧图与程序化回退自然退化为静止绘制
+
+    // 防御性夹取（起点）：声明帧区间可能先于/后于真实帧数变化（如声明 5 帧的
+    // 精灵表加载失败、回退到单帧图时帧数变为 1），夹到 [0, 帧数-1] 保证不越界
+    const int firstFrame = std::clamp(m_animFirst, 0, m_frameCount - 1);
+
+    // 防御性夹取（终点）：m_animLast < 0 是「全区间」约定（= 帧数 - 1，
+    // 成员默认值不依赖加载后才确定的帧数）；其余情形夹到 [起点, 帧数-1]，
+    // 反序声明（last < first）按定格起点处理而不是崩溃或负数长度
+    const int lastFrame = (m_animLast < 0)
+        ? m_frameCount - 1
+        : std::clamp(m_animLast, firstFrame, m_frameCount - 1);
+
+    // 子区间长度（含两端）：first == last 时长度为 1，帧号恒等于 first（定格）
+    const int rangeLength = lastFrame - firstFrame + 1;
+
+    // 帧号 = 区间起点 + 循环序号对区间长度取模（区间内循环播放）
+    const int frameIndex =
+        firstFrame + static_cast<int>(m_animTime / m_frameTime) % rangeLength;
 
     // srcRect 是「从精灵表里裁剪哪一块」的矩形：第 f 帧的横向起点 = f * 帧宽。
     // 精灵表只有一行帧，所以 y 恒为 0；宽高各取一个实体的大小
     const SDL_FRect src{ static_cast<float>(frameIndex) * m_w, 0.0f, m_w, m_h };
 
-    // SDL_RenderTexture 用 src 从整张精灵表裁出当前帧，再画到 dst 位置
-    SDL_RenderTexture(renderer, m_texture, &src, &dst);
+    // 翻转绘制：需要镜像时走 SDL_RenderTextureRotated——旋转 0 度、旋转中心
+    // 传 nullptr（绕目标矩形自身中心）时，它与 SDL_RenderTexture 等价，只是
+    // 多出翻转参数（SDL_RenderTexture 本身没有翻转能力）。
+    // 未翻转时保留 SDL_RenderTexture 快路径：绝大多数实体、绝大多数时刻
+    // 都不翻转，少一层旋转管线开销
+    if (m_flipped)
+    {
+        SDL_RenderTextureRotated(renderer, m_texture, &src, &dst, 0.0, nullptr,
+                                 SDL_FLIP_HORIZONTAL);
+    }
+    else
+    {
+        // SDL_RenderTexture 用 src 从整张精灵表裁出当前帧，再画到 dst 位置
+        SDL_RenderTexture(renderer, m_texture, &src, &dst);
+    }
 }
 
 // 返回当前位置与尺寸组成的矩形副本：AABB 碰撞判定和重生避让都依赖它。
@@ -111,6 +144,33 @@ void Entity::setFrameTime(float frameTime)
     m_frameTime = frameTime; // 覆盖每帧时长：下一帧 render 的帧号换算立即生效
 }
 
+// 设置帧动画的循环子区间 [first, last]（含两端）
+void Entity::setAnimationRange(int first, int last)
+{
+    // 参数校验只处理「描述不清」的输入：负起点没有帧可指（-1 是成员默认值
+    // 的保留约定，不是合法入参）；last 非负却小于 first 属于反序区间
+    //（想定格就写 first == last）。帧数相关越界不在此校验——加载顺序不定
+    // （声明可能先于加载，回退单帧图时帧数还会变），统一交给 render 的
+    // 防御性夹取，保证任何调用顺序都不越界
+    if (first < 0 || (last >= 0 && last < first))
+    {
+        SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                    "动画帧区间非法（收到 [%d, %d]），忽略该配置", first, last);
+        return;
+    }
+
+    m_animFirst = first; // 区间起点帧：循环从它开始
+    m_animLast = last;   // 区间终点帧（含）；-1 = 全区间（render 解析为帧数 - 1）
+}
+
+// 设置水平翻转绘制：只写渲染标记，不触碰任何逻辑数据。
+// 碰撞 rect()、插值位置与攻击判定都按未翻转的数据计算——镜像纯属
+// 「画出来的样子」，不影响玩法与手感
+void Entity::setFlipped(bool flipped)
+{
+    m_flipped = flipped; // 下一帧 render 立即生效（帧号/位置等其他逻辑不受影响）
+}
+
 // 三级回退纹理加载：把原先 Player/Coin 各自复制的加载流程收敛到这里。
 // 加载顺序：精灵表 -> 单帧图 -> 程序化纯色，逐级降级并记录警告
 bool Entity::loadTextureWithFallback(SDL_Renderer* renderer,
@@ -145,6 +205,11 @@ bool Entity::loadTextureWithFallback(SDL_Renderer* renderer,
         if (m_texture != nullptr)
         {
             m_frameCount = sheetFrameCount; // 帧数改为精灵表帧数，动画生效
+            // 像素风必需：把纹理的缩放采样设为最近邻。SDL 默认线性插值在
+            // 放大时会混合相邻像素（像素画被糊成渐变），最近邻保持每个像素
+            // 的硬边缘——本项目精灵均按整数倍放大显示（16x28 帧 -> 48x84
+            // 等），最近邻是像素锐利的唯一选择（该调用对逻辑/内存无影响）
+            SDL_SetTextureScaleMode(m_texture, SDL_SCALEMODE_NEAREST);
             return true;                    // 首选路径成功，加载结束
         }
 
@@ -159,6 +224,9 @@ bool Entity::loadTextureWithFallback(SDL_Renderer* renderer,
         m_texture = IMG_LoadTexture(renderer, singleFullPath.c_str());
         if (m_texture != nullptr)
         {
+            // 同精灵表路径：单帧图同样按最近邻采样（它是精灵表的降级替代，
+            // 采样方式必须一致，否则降级前后画面清晰度会出现可见差异）
+            SDL_SetTextureScaleMode(m_texture, SDL_SCALEMODE_NEAREST);
             return true; // 次选路径成功，加载结束
         }
     }
@@ -172,8 +240,8 @@ bool Entity::loadTextureWithFallback(SDL_Renderer* renderer,
 
     // 1. 创建一张与实体尺寸一致的内存表面（Surface 是 CPU 侧的像素数据）
     SDL_Surface* surface = SDL_CreateSurface(
-        static_cast<int>(m_w),     // 表面宽度 = 实体宽（如玩家 50 / 金币 24）
-        static_cast<int>(m_h),     // 表面高度 = 实体高
+        static_cast<int>(m_w),     // 表面宽度 = 实体宽（尺寸由派生类构造时固定）
+        static_cast<int>(m_h),     // 表面高度 = 实体高（与精灵表单帧尺寸一致）
         SDL_PIXELFORMAT_RGBA8888); // 每像素 32 位 RGBA，通用直观
 
     // 表面创建失败通常意味着内存不足，把失败原样交给调用方
@@ -196,6 +264,13 @@ bool Entity::loadTextureWithFallback(SDL_Renderer* renderer,
 
     // 4. 像素数据已复制进纹理，表面完成使命，立刻销毁避免内存泄漏
     SDL_DestroySurface(surface);
+
+    // 同精灵表路径：程序化回退纹理也按最近邻采样——三条加载路径的
+    // 采样方式完全一致，避免「降级后观感突变」这类隐性差异
+    if (m_texture != nullptr)
+    {
+        SDL_SetTextureScaleMode(m_texture, SDL_SCALEMODE_NEAREST);
+    }
 
     // 纹理指针有效即本函数成功；回退纹理只有 1 帧（m_frameCount 保持 1），
     // 动画会自动退化为单帧静止绘制，无需在此额外标记

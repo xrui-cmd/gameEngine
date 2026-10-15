@@ -17,6 +17,9 @@
 //   4. 三级回退加载：精灵表 -> 单帧图 -> 程序化纯色（收敛为辅助方法）
 //   5. 插值渲染：记录「上一固定步位置」m_prevX/m_prevY，render 按 alpha
 //      在 prev->cur 之间线性插值（详见 render 与 snapshotPreviousPosition）
+//   6. 渲染增强：水平翻转绘制（setFlipped）、动画循环子区间
+//      （setAnimationRange，跑动帧与站立帧拼一张表按状态切换）、纹理
+//      最近邻采样（像素风素材整数倍放大保持像素锐利，不做线性糊化）
 //
 // 统一动画语义（与原先 Player/Coin 的规则完全一致）：
 //   m_animTime 按固定步长累加；帧号 = int(m_animTime / m_frameTime) % m_frameCount
@@ -78,6 +81,27 @@ public:
     // 晚一步落定才能覆盖它。非正值会被忽略并警告（帧号换算以它为除数）
     void setFrameTime(float frameTime);
 
+    // 设置帧动画的循环子区间 [first, last]（含两端，帧号从 0 起）：
+    //   - 不调用 = 默认全区间循环（帧号 0 ~ 帧数-1，即基类原有行为）；
+    //   - first == last = 定格在该帧（区间长度为 1，帧号恒等于 first）；
+    //   - 典型用法：把「跑动帧」与「站立帧」拼进同一张精灵表（如玩家
+    //     run f0~f3 + idle f0 共 5 帧），移动时循环 run 子区间 [0,3]、
+    //     静止时定格 idle 帧 [4,4]——不必为两种状态各加载一张表。
+    // 帧数相关的越界（子区间落在实际帧数之外）不在设置时校验——加载顺序
+    // 不定（可能先声明后加载、也可能回退成单帧图），统一由 render 的
+    // 帧号换算做防御性夹取，保证任何调用顺序都不会越界或崩溃
+    void setAnimationRange(int first, int last);
+
+    // 设置水平翻转绘制：true = 左右镜像（SDL 翻转参数），false = 原始朝向。
+    // 纯渲染层标记：碰撞 rect()、插值位置、攻击判定等逻辑一律按未翻转的
+    // 数据计算，镜像只改变「画出来的样子」。服务「移动时朝向翻转」这类
+    // 需求（本方法只存储标记，绘制时才消费）
+    void setFlipped(bool flipped);
+
+    // 当前是否处于水平翻转绘制状态（渲染层查询用；子类绘制附属特效时
+    // 需要与本体朝向保持一致可用它）
+    bool flipped() const { return m_flipped; }
+
     // 尺寸便捷查询（重开归位时计算窗口居中位置在用）
     float width() const { return m_w; }  // 宽（像素）
     float height() const { return m_h; } // 高（像素）
@@ -111,6 +135,7 @@ protected:
 
     // ---------- 渲染数据 ----------
     SDL_Texture* m_texture = nullptr; // 纹理；load 成功后非空，未加载时为 nullptr
+    bool m_flipped = false;           // 是否水平翻转绘制（setFlipped 设置；纯渲染层标记）
 
     // ---------- 帧动画数据 ----------
     // m_frameCount：纹理实际包含的帧数（精灵表 > 1；单帧图/程序化回退为 1）
@@ -119,6 +144,12 @@ protected:
     int m_frameCount = 1;     // 默认 1 帧：单帧语义对静止实体天然成立
     float m_frameTime = 0.0f; // 未加载纹理时无意义；load 成功路径必然写入正值
     float m_animTime = 0.0f;  // 初值 0 表示从第 1 帧开始
+
+    // 动画循环子区间（setAnimationRange 设置）。约定 m_animLast == -1 为
+    // 「全区间」（解析为 m_frameCount - 1）——成员默认值因此不依赖加载后
+    // 才确定的帧数；first == last 时区间长度为 1，即定格该帧
+    int m_animFirst = 0; // 子区间起始帧（0 起）
+    int m_animLast = -1; // 子区间结束帧（含）；-1 = 全区间（= 帧数 - 1）
 };
 
 #endif // !__ENTITY_H__
