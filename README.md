@@ -53,6 +53,13 @@
 - header-only 的二维向量（`include/engine/math/`）：构造、加减、标量乘除、点积、长度 / 长度平方、归一化（零向量保护）、两点距离与线性插值。
 - 「一对浮点」的位置 / 速度 / 位移逐步收编为类型化运算；`Vec3` / `Mat4` 随 3D 需求到来再补，接口风格保持一致（架构红线①：header-only、渐进迁移）。
 
+### Camera（世界 <-> 屏幕变换与平滑跟随）
+
+- header-only 的 2D 相机（`include/engine/Camera.h`）：把「世界坐标」与「屏幕坐标」的换算收敛到一处——实体存世界坐标，绘制前 `worldToScreen`；鼠标输入经 `screenToWorld` 回到世界。
+- `snapTo(cx,cy)` 立即定位；`follow(cx,cy,dt,smoothTime)` 指数平滑跟随（`factor = 1 - exp(-dt / smoothTime)`，公式蕴含 dt、帧率无关、无过冲）。
+- 每轴自动钳制：世界不小于视口时钳在 `[0, world - viewport]`（看不到世界外虚空）；世界小于视口时该轴居中。
+- 3D 前瞻：相机本质 = 世界 -> 屏幕的坐标变换；未来 3D 时内部升级为视图 x 投影矩阵，「实体存世界坐标、绘制处换算」的纪律与接口语义保持不变。
+
 ### Rect（碰撞工具）
 
 - `rectsOverlap()`：header-only 的 AABB 相交判定（分离轴思想），约定「边界刚好贴合不算碰撞」。
@@ -63,7 +70,8 @@
 GameEngine/
 ├─ CMakeLists.txt          # 静态库工程定义（target：GameEngine）
 ├─ include/engine/         # 公开头文件（宿主以 "engine/xxx.h" 包含）
-│  ├─ Entity.h             # 实体基类：位置尺寸 / 帧动画（帧区间）/ 三级回退 / 插值快照 / 翻转
+│  ├─ Entity.h             # 实体基类：位置尺寸 / 帧动画（帧区间）/ 三级回退 / 插值快照 / 翻转 / 相机化渲染
+│  ├─ Camera.h             # 2D 相机：世界↔屏幕换算 / 指数平滑跟随 / 世界边界钳制（header-only）
 │  ├─ Scene.h              # 场景基类：五个生命周期回调 + 注入接口
 │  ├─ SceneManager.h       # 场景管理器：唯一所有权 + 延迟切换 + 帧末结算
 │  ├─ UpdateContext.h      # 固定步长世界上下文（dt / 键盘 / 视口 / 输入系统）
@@ -76,7 +84,7 @@ GameEngine/
 │  └─ math/                # 数学层（header-only 起步）
 │     └─ Vec2.h            # 二维向量：算术 / 点积 / 长度 / 归一化 / 插值
 ├─ src/                    # 实现文件
-│  ├─ Entity.cpp           # 纹理回退（最近邻采样）/ 帧号换算（子区间）/ 插值绘制 / 翻转
+│  ├─ Entity.cpp           # 纹理回退（最近邻采样）/ 帧号换算（子区间）/ 插值绘制（相机换算）/ 翻转
 │  ├─ SceneManager.cpp     # 延迟切换与事件 / 更新 / 渲染转发
 │  ├─ Config.cpp           # 逐行解析与坏行容错
 │  ├─ Input.cpp            # 动作绑定与边沿推进（键盘 + 鼠标同路径；update / 注入入口）
@@ -218,13 +226,16 @@ public:
 
   void render(float alpha) override
   {
-    m_star.render(m_renderer, alpha); // alpha 在 [0,1)，在上一固定步与当前位置间插值
+    // alpha 在 [0,1)：插值位置先算世界坐标，再经相机换算到屏幕绘制。
+    // 相机由场景持有：每固定步 follow 玩家中心、渲染时按值传入实体
+    m_star.render(m_renderer, alpha, m_camera);
   }
 
 private:
   SDL_Renderer* m_renderer = nullptr; // 只借用，不持有所有权
   AudioSystem* m_audio = nullptr;     // 同上
   Star m_star;                        // 实体按值持有
+  Camera m_camera;                    // 相机按值持有（onEnter 设置视口/世界尺寸，每步 follow）
 };
 ```
 
@@ -237,8 +248,9 @@ private:
 1. **逻辑只认固定步**：每步 `update(ctx)` 以恒定 `ctx.deltaTime` 推进；碰撞判定使用逻辑位置（`rect()`），保证确定性。
 2. **一步一头快照**：每步开始时 `snapshotPreviousPosition()` 记下起点，本步结束后的新位置成为插值终点。
 3. **帧末换算 alpha**：宿主把「未消耗的时间余额 ÷ 固定步长」得到 [0,1) 的 `alpha`，传入 `render(alpha)`。
-4. **渲染只做插值**：`render` 在上一固定步位置与当前位置之间线性插值，不修改任何逻辑状态（因此是 `const` 方法）。
-5. **瞬移必对齐**：`setPosition` 内部已同步快照；自定义瞬移（如随机落点重生）必须在落点定稿后手动调用 `snapshotPreviousPosition()`，否则渲染会从瞬移前的位置「拉丝」滑过去。
+4. **渲染只做插值**：`render` 在上一固定步位置与当前位置之间线性插值（世界坐标），不修改任何逻辑状态（因此是 `const` 方法）。
+5. **绘制处换算屏幕**：插值得到的世界坐标再经 `camera.worldToScreen` 换算为屏幕坐标绘制——判定用世界坐标、渲染用屏幕坐标，两侧由相机一处连接。
+6. **瞬移必对齐**：`setPosition` 内部已同步快照；自定义瞬移（如随机落点重生）必须在落点定稿后手动调用 `snapshotPreviousPosition()`，否则渲染会从瞬移前的位置「拉丝」滑过去。
 
 不启用插值时回退也很简单：`alpha` 传 0，画面即固定步位置——逻辑正确性不受影响。
 

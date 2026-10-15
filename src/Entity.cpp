@@ -1,4 +1,5 @@
 #include "engine/Entity.h"
+#include "engine/Camera.h"       // Camera：渲染时「世界坐标 -> 屏幕坐标」的换算
 #include <SDL3_image/SDL_image.h> // IMG_LoadTexture：SDL3_image 提供的图片文件加载 API
 #include <algorithm>              // std::clamp：动画子区间与帧号的防御性夹取
 #include <string>                 // std::string：拼接素材文件的绝对路径
@@ -34,8 +35,8 @@ void Entity::update(const UpdateContext& ctx)
     m_animTime += ctx.deltaTime; // 累加固定步时长；不取模，保持逻辑最简
 }
 
-// 按「上一固定步位置 <-> 当前位置」的线性插值绘制
-void Entity::render(SDL_Renderer* renderer, float alpha) const
+// 按「上一固定步位置 <-> 当前位置」的线性插值绘制（再经相机换算到屏幕）
+void Entity::render(SDL_Renderer* renderer, float alpha, const Camera& camera) const
 {
     // 纹理尚未加载成功时直接返回，避免空指针导致崩溃
     if (m_texture == nullptr)
@@ -43,15 +44,22 @@ void Entity::render(SDL_Renderer* renderer, float alpha) const
         return; // 未加载就没有可绘制的内容
     }
 
-    // ==== 插值位置计算（本次改造的核心渲染逻辑） ====
+    // ==== 插值位置计算（渲染平滑的核心逻辑） ====
     // alpha=0 时取上一固定步的坐标，alpha 趋近 1 时取当前坐标；
     // 两点之间线性过渡，把逻辑步（120Hz）的离散位移铺成渲染帧上的平滑运动。
-    // 注意：这只影响「画在哪」，碰撞用的 rect() 仍然返回 m_x/m_y 逻辑位置
-    const float renderX = m_prevX + (m_x - m_prevX) * alpha; // 插值后的绘制 x
-    const float renderY = m_prevY + (m_y - m_prevY) * alpha; // 插值后的绘制 y
+    // 注意：这只是「世界坐标下的绘制位置」——碰撞用的 rect() 仍然返回
+    // m_x/m_y 逻辑位置，逻辑与渲染的既有解耦纪律不因相机改变
+    const float renderX = m_prevX + (m_x - m_prevX) * alpha; // 插值后的世界坐标 x
+    const float renderY = m_prevY + (m_y - m_prevY) * alpha; // 插值后的世界坐标 y
+
+    // ==== 世界 -> 屏幕换算（本批相机化的核心步骤） ====
+    // 实体存世界坐标；绘制前把插值后的世界点减掉相机左上角偏移。
+    // 换算收敛在 Camera 一处（将来加缩放/旋转也只改它），实体不需要
+    // 知道相机的任何内部状态
+    const Vec2 screenPos = camera.worldToScreen(renderX, renderY); // 屏幕坐标绘制点
 
     // 目标矩形：纹理画在屏幕上的位置和尺寸（碰撞盒语义与动画无关，恒为 m_w x m_h）
-    const SDL_FRect dst{ renderX, renderY, m_w, m_h };
+    const SDL_FRect dst{ screenPos.x, screenPos.y, m_w, m_h };
 
     // ==== 固定帧时长与渲染帧率解耦的帧号换算 ====
     // 用「累计逻辑时间 / 每帧时长」向下取整得到循环序号：时间攒够 m_frameTime

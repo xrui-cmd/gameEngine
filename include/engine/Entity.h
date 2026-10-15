@@ -4,6 +4,11 @@
 #include <SDL3/SDL.h>
 #include "UpdateContext.h" // UpdateContext：update 的「世界上下文」参数
 
+// 前置声明：render 只以引用接收相机（完整定义见 engine/Camera.h）。
+// 不在此 include 相机头：实体头文件是高频包含方，前置声明把编译依赖
+// 收敛到「真正需要调用 worldToScreen 的 Entity.cpp」
+class Camera;
+
 // ============================================================
 // Entity：所有游戏实体的抽象基类（引擎层）
 // ============================================================
@@ -12,11 +17,13 @@
 // 同样的逻辑改一处要同步两处。本基类把公共能力收敛到一处：
 //
 //   1. 空间数据：位置 m_x/m_y、尺寸 m_w/m_h，以及 rect() 矩形查询
+//      （自相机落地起：位置一律为「世界坐标」，判定与渲染在绘制处解耦）
 //   2. 纹理生命周期：release() 幂等释放；析构函数自动兜底调用
 //   3. 帧动画：时间轴 m_animTime + 帧号换算（与渲染帧率解耦）
 //   4. 三级回退加载：精灵表 -> 单帧图 -> 程序化纯色（收敛为辅助方法）
 //   5. 插值渲染：记录「上一固定步位置」m_prevX/m_prevY，render 按 alpha
-//      在 prev->cur 之间线性插值（详见 render 与 snapshotPreviousPosition）
+//      在 prev->cur 之间线性插值，再经相机换算为屏幕坐标绘制
+//      （详见 render 与 snapshotPreviousPosition）
 //   6. 渲染增强：水平翻转绘制（setFlipped）、动画循环子区间
 //      （setAnimationRange，跑动帧与站立帧拼一张表按状态切换）、纹理
 //      最近邻采样（像素风素材整数倍放大保持像素锐利，不做线性糊化）
@@ -55,8 +62,11 @@ public:
 
     // 按「上一固定步位置 <-> 当前位置」的线性插值绘制；alpha 是两步之间
     // 的进度 [0,1)。不修改自身数据（rect() 等碰撞查询仍用逻辑位置），
-    // 因此是 const 方法。默认实现已覆盖「从精灵表裁当前帧 -> 画到插值位置」
-    virtual void render(SDL_Renderer* renderer, float alpha) const;
+    // 因此是 const 方法。默认实现已覆盖「从精灵表裁当前帧 -> 画到插值位置」。
+    // 相机参数（本批新增）：实体位置是世界坐标，绘制前在 render 内部用
+    // camera.worldToScreen 换算到屏幕——「判定用世界坐标（rect()）、渲染
+    // 在绘制处换算」的既有解耦纪律延续；子类覆写时必须把相机原样传递
+    virtual void render(SDL_Renderer* renderer, float alpha, const Camera& camera) const;
 
     // 返回实体当前的轴对齐矩形（位置 + 尺寸的副本），供 AABB 碰撞检测使用。
     // 注意返回的是「逻辑位置」而不是插值后的渲染位置：碰撞在固定步内
