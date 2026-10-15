@@ -160,8 +160,11 @@ constexpr float dot(const Vec2& a, const Vec2& b)
   return a.x * b.x + a.y * b.y; // 对应分量乘积之和
 }
 
-// 两点距离：|a - b|。两个位置直接用，无需手写差值再量长度
-float distance(const Vec2& a, const Vec2& b)
+// 两点距离：|a - b|。两个位置直接用，无需手写差值再量长度。
+// inline 说明：本头文件是 header-only、会被多个翻译单元包含（引擎库 +
+// 宿主各类），自由函数不加 inline 会出现多重定义链接错误；constexpr 的
+// 那些运算隐含 inline，本函数依赖 std::sqrt 不能标 constexpr，需显式 inline
+inline float distance(const Vec2& a, const Vec2& b)
 {
   return (a - b).length(); // 差向量的长度即两点间距离
 }

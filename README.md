@@ -26,10 +26,11 @@
 - 把一次 `update` 所需的稳定环境打包成只读结构按值传递：固定步长 `deltaTime`、键盘状态（过渡期保留、迁移完成后移除）、视口尺寸、输入系统指针。
 - 固定步长主循环**不属于引擎**（由宿主实现）；引擎只提供这条「每步输入」契约——将来扩展字段（鼠标位置等）不会改动实体一方的调用形式。
 
-### Input（动作映射与边沿检测）
+### Input（动作映射与边沿检测：键盘 + 鼠标）
 
 - 把物理按键映射为语义动作：`bind("move_up", SDL_SCANCODE_W)`，重复绑定即改键；`held` / `pressed` / `released` 三种查询，未绑定动作一律安全返回 false。
-- 按渲染帧采样一次（`update`），同一帧内所有固定步共享同一份快照（边沿在整帧内可见）；`updateFromKeyArray` 供单元测试注入合成键盘状态，边沿检测无需窗口即可确定性验证。
+- 鼠标同库支持：`bindMouse("attack", SDL_BUTTON_LEFT)` 把动作映射到鼠标按钮（左 / 中 / 右键等），`mousePosition()` 返回采样时的指针位置（`Vec2`、窗口客户区坐标）。同一动作可同时拥有键盘与鼠标绑定，查询时两路状态合并（任一路按下即动作按下）——玩法只问动作名，不关心输入设备。
+- 按渲染帧采样一次（`update`）：一次调用同时取键盘数组与鼠标状态（按钮掩码 + 指针位置），两类输入共享同一份帧快照，边沿在整帧内对所有固定步可见；`updateFromKeyArray` / `updateFromMouseState` 供单元测试注入合成状态，边沿检测无需窗口即可确定性验证。
 
 ### Config（数据驱动配置）
 
@@ -66,7 +67,7 @@ GameEngine/
 │  ├─ Scene.h              # 场景基类：五个生命周期回调 + 注入接口
 │  ├─ SceneManager.h       # 场景管理器：唯一所有权 + 延迟切换 + 帧末结算
 │  ├─ UpdateContext.h      # 固定步长世界上下文（dt / 键盘 / 视口 / 输入系统）
-│  ├─ Input.h              # 输入系统：动作映射 / 改键 / 边沿检测（held/pressed/released）
+│  ├─ Input.h              # 输入系统：动作映射 / 改键 / 边沿检测（键盘 + 鼠标，held/pressed/released）
 │  ├─ Config.h             # INI 风格配置解析（容错 + 默认值回退）
 │  ├─ AudioSystem.h        # 音效系统（RAII + 全链路降级）
 │  ├─ Font.h               # TTF 文本加载 / 测量 / 绘制（RAII）
@@ -78,7 +79,7 @@ GameEngine/
 │  ├─ Entity.cpp           # 纹理回退（最近邻采样）/ 帧号换算（子区间）/ 插值绘制 / 翻转
 │  ├─ SceneManager.cpp     # 延迟切换与事件 / 更新 / 渲染转发
 │  ├─ Config.cpp           # 逐行解析与坏行容错
-│  ├─ Input.cpp            # 动作绑定与边沿推进（update / updateFromKeyArray 同路径）
+│  ├─ Input.cpp            # 动作绑定与边沿推进（键盘 + 鼠标同路径；update / 注入入口）
 │  ├─ AudioSystem.cpp      # SDL3_mixer 初始化 / 加载 / 播放 / 释放
 │  └─ Font.cpp             # SDL3_ttf 加载与文本绘制
 ├─ .gitignore              # 忽略构建产物（out/、build/、*.obj 等）
