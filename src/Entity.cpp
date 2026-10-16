@@ -47,8 +47,8 @@ void Entity::render(SDL_Renderer* renderer, float alpha, const Camera& camera) c
     // ==== 插值位置计算（渲染平滑的核心逻辑） ====
     // alpha=0 时取上一固定步的坐标，alpha 趋近 1 时取当前坐标；
     // 两点之间线性过渡，把逻辑步（120Hz）的离散位移铺成渲染帧上的平滑运动。
-    // 注意：这只是「世界坐标下的绘制位置」——碰撞用的 rect() 仍然返回
-    // m_x/m_y 逻辑位置，逻辑与渲染的既有解耦纪律不因相机改变
+    // 注意：这只是「世界坐标下的绘制位置」——碰撞查询（rect()/collisionRect()）
+    // 仍然返回 m_x/m_y 逻辑位置，逻辑与渲染的既有解耦纪律不因相机改变
     const float renderX = m_prevX + (m_x - m_prevX) * alpha; // 插值后的世界坐标 x
     const float renderY = m_prevY + (m_y - m_prevY) * alpha; // 插值后的世界坐标 y
 
@@ -58,7 +58,9 @@ void Entity::render(SDL_Renderer* renderer, float alpha, const Camera& camera) c
     // 知道相机的任何内部状态
     const Vec2 screenPos = camera.worldToScreen(renderX, renderY); // 屏幕坐标绘制点
 
-    // 目标矩形：纹理画在屏幕上的位置和尺寸（碰撞盒语义与动画无关，恒为 m_w x m_h）
+    // 目标矩形：纹理画在屏幕上的位置和尺寸。渲染恒为「完整精灵」
+    // m_w x m_h（全身像）；碰撞判定若设了「脚部小盒」，由 collisionRect()
+    // 单独提供——判定用盒、画面用整张精灵，解耦入口就在这里
     const SDL_FRect dst{ screenPos.x, screenPos.y, m_w, m_h };
 
     // ==== 固定帧时长与渲染帧率解耦的帧号换算 ====
@@ -115,6 +117,47 @@ SDL_FRect Entity::rect() const
 {
     // SDL_FRect 用 x,y（左上角）+ w,h（宽高）描述轴对齐矩形
     return SDL_FRect{ m_x, m_y, m_w, m_h };
+}
+
+// 设置碰撞盒：宽高 + 相对精灵左上角的偏移（本批「碰撞体积与视觉解耦」的入口）
+void Entity::setCollisionBox(float w, float h, float offsetX, float offsetY)
+{
+    // 非正尺寸没有判定语义（零面积盒永远不参与碰撞，静默接受只会
+    // 让调用方以为设置成功）：记录警告并忽略，保留原碰撞盒（缺省=整张精灵）
+    if (!(w > 0.0f) || !(h > 0.0f))
+    {
+        SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                    "碰撞盒尺寸必须为正数（收到 %f x %f），忽略该设置", w, h);
+        return;
+    }
+
+    m_collisionW = w;                 // 碰撞盒宽（像素）：判定面积的水平尺寸
+    m_collisionH = h;                 // 碰撞盒高（像素）：判定面积的垂直尺寸
+    m_collisionOffsetX = offsetX;     // 偏移 x（像素）：盒左上角相对精灵左上角
+    m_collisionOffsetY = offsetY;     // 偏移 y（像素）：同上（脚部小盒在这里下移）
+}
+
+// 当前逻辑位置下的碰撞盒（世界坐标）：collisionRectAt 代入当前位置
+SDL_FRect Entity::collisionRect() const
+{
+    // 位置参数化换算收敛在 collisionRectAt 一处，本函数只是便捷入口
+    return collisionRectAt(m_x, m_y);
+}
+
+// 「实体左上角放在 (x, y) 时」的碰撞盒矩形（纯计算，不改状态）
+SDL_FRect Entity::collisionRectAt(float x, float y) const
+{
+    // 未设置碰撞盒（尺寸非正——含成员默认值 0）：退化为整张精灵盒。
+    // 这条分支就是「缺省 = 整张精灵」语义的落点：老实体不调用
+    // setCollisionBox 时，collisionRectAt 与 rect 完全同一结果
+    if (!(m_collisionW > 0.0f) || !(m_collisionH > 0.0f))
+    {
+        return SDL_FRect{ x, y, m_w, m_h };
+    }
+
+    // 已设置：左上角 = 精灵左上角 + 偏移；尺寸 = 碰撞盒尺寸
+    return SDL_FRect{ x + m_collisionOffsetX, y + m_collisionOffsetY,
+                      m_collisionW, m_collisionH };
 }
 
 // 把「上一固定步位置」对齐到「当前位置」。

@@ -13,6 +13,7 @@
 - 三级资源回退（精灵表 → 单帧图 → 程序化纯色）；插值快照纪律：`update` 首行调用 `snapshotPreviousPosition()`，`render(alpha)` 在上一固定步位置与当前位置之间线性插值。
 - `setFlipped(bool)`：水平翻转绘制（SDL 翻转参数）。纯渲染层标记——碰撞、插值、判定等逻辑一律不受镜像影响。
 - `setAnimationRange(first, last)`：动画循环子区间（默认全区间，`first == last` 定格该帧）。典型用法：跑动帧与站立帧拼进同一张精灵表，按状态切换子区间。
+- `setCollisionBox(w, h, offsetX, offsetY)` / `collisionRect()` / `collisionRectAt(x, y)`：碰撞盒——把「判定体积」与精灵视觉解耦（缺省 = 整张精灵、偏移 0，未设置时与 `rect()` 完全一致）。物理用途（墙碰撞滑动、落点校验、实体互碰、拾取）取 `collisionRect()`（逻辑位置、固定步内确定）、渲染/合成照旧用完整精灵；典型用法是俯视角「脚部小盒」——身体可自然叠压墙脚而脚盒不穿透。
 - 纹理统一以最近邻采样（`SDL_SCALEMODE_NEAREST`）：像素风素材整数倍放大时保持像素锐利，不被线性插值糊化（三条回退路径一致）。
 
 ### Scene 与 SceneManager（场景框架）
@@ -70,7 +71,7 @@
 GameEngine/
 ├─ CMakeLists.txt          # 静态库工程定义（target：GameEngine）
 ├─ include/engine/         # 公开头文件（宿主以 "engine/xxx.h" 包含）
-│  ├─ Entity.h             # 实体基类：位置尺寸 / 帧动画（帧区间）/ 三级回退 / 插值快照 / 翻转 / 相机化渲染
+│  ├─ Entity.h             # 实体基类：位置尺寸 / 帧动画（帧区间）/ 三级回退 / 插值快照 / 翻转 / 碰撞盒 / 相机化渲染
 │  ├─ Camera.h             # 2D 相机：世界↔屏幕换算 / 指数平滑跟随 / 世界边界钳制（header-only）
 │  ├─ Scene.h              # 场景基类：五个生命周期回调 + 注入接口
 │  ├─ SceneManager.h       # 场景管理器：唯一所有权 + 延迟切换 + 帧末结算
@@ -84,7 +85,7 @@ GameEngine/
 │  └─ math/                # 数学层（header-only 起步）
 │     └─ Vec2.h            # 二维向量：算术 / 点积 / 长度 / 归一化 / 插值
 ├─ src/                    # 实现文件
-│  ├─ Entity.cpp           # 纹理回退（最近邻采样）/ 帧号换算（子区间）/ 插值绘制（相机换算）/ 翻转
+│  ├─ Entity.cpp           # 纹理回退（最近邻采样）/ 帧号换算（子区间）/ 插值绘制（相机换算）/ 翻转 / 碰撞盒换算
 │  ├─ SceneManager.cpp     # 延迟切换与事件 / 更新 / 渲染转发
 │  ├─ Config.cpp           # 逐行解析与坏行容错
 │  ├─ Input.cpp            # 动作绑定与边沿推进（键盘 + 鼠标同路径；update / 注入入口）
