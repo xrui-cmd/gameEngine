@@ -1,6 +1,6 @@
 # GameEngine
 
-从 **COIN RUSH（金币冲刺）** 游戏中沉淀出来的轻量 2D 游戏引擎：构建在 SDL3 之上、以 C++20 编写，提供与具体玩法无关的框架能力——场景管理、实体与帧动画、文本渲染、音效播放、配置解析与碰撞判定。
+从 **COIN RUSH（金币冲刺）** 游戏中沉淀出来的轻量 2D 游戏引擎：构建在 SDL3 之上、以 C++20 编写，提供与具体玩法无关的框架能力——场景管理、实体与帧动画、文本渲染、音效播放、配置解析、碰撞判定、2D 相机与矩形粒子系统。
 
 引擎不内嵌 SDL，也不包含主循环与玩法规则（这两者属于宿主）；本仓库是一个纯静态库工程。
 
@@ -54,12 +54,21 @@
 - header-only 的二维向量（`include/engine/math/`）：构造、加减、标量乘除、点积、长度 / 长度平方、归一化（零向量保护）、两点距离与线性插值。
 - 「一对浮点」的位置 / 速度 / 位移逐步收编为类型化运算；`Vec3` / `Mat4` 随 3D 需求到来再补，接口风格保持一致（架构红线①：header-only、渐进迁移）。
 
-### Camera（世界 <-> 屏幕变换与平滑跟随）
+### Camera（世界 <-> 屏幕变换、平滑跟随与震屏）
 
 - header-only 的 2D 相机（`include/engine/Camera.h`）：把「世界坐标」与「屏幕坐标」的换算收敛到一处——实体存世界坐标，绘制前 `worldToScreen`；鼠标输入经 `screenToWorld` 回到世界。
 - `snapTo(cx,cy)` 立即定位；`follow(cx,cy,dt,smoothTime)` 指数平滑跟随（`factor = 1 - exp(-dt / smoothTime)`，公式蕴含 dt、帧率无关、无过冲）。
 - 每轴自动钳制：世界不小于视口时钳在 `[0, world - viewport]`（看不到世界外虚空）；世界小于视口时该轴居中。
+- `addShake(amplitude, duration)` / `update(dt)` / `shakeOffset()` / `clearShake()`：震屏——振幅随时长线性衰减，偏移方向由相位驱动做单位圆抖动（`|偏移| <= 当前振幅`）。只作用于 `worldToScreen`（渲染跟随抖动），`screenToWorld` 刻意不含抖动，鼠标世界瞄准保持稳定；震屏不改变 `position()`，跟随/边界钳制完全不受影响。叠加语义：更强（或同强）的震屏覆盖并重新计时，弱震不打断强震。
 - 3D 前瞻：相机本质 = 世界 -> 屏幕的坐标变换；未来 3D 时内部升级为视图 x 投影矩阵，「实体存世界坐标、绘制处换算」的纪律与接口语义保持不变。
+
+### ParticleSystem（固定池矩形粒子）
+
+- `include/engine/ParticleSystem.h` + `src/ParticleSystem.cpp`：固定容量 512 的对象池，运行期零分配；`emitBurst(x, y, count, params)` 一次性爆发发射，`update(dt)` 推进寿命/重力/阻尼/位移，`render(renderer, camera)` 经相机换算到屏幕空间绘制半透明矩形。
+- 参数包 `ParticleParams`：颜色、速度范围、寿命范围、尺寸范围、方向与总张角（整圆/扇形/直线三种语义）、重力、阻尼——默认值是一团向上的白色小火花，调用方只改关心的字段。
+- 池满策略：环形扫描首个空闲槽位，整池活跃时覆盖游标处（最旧）粒子——「新粒子优先、丢弃最旧」，高密度事件不会静默丢新反馈。寿命归零立即释放槽位。
+- 淡出：渲染 alpha = 基础 alpha × (life / maxLife)，线性渐隐；绘制使用 `SDL_BLENDMODE_BLEND` 并保存/恢复渲染器混合模式与绘制色，不污染后续绘制。
+- 确定性：内部 xorshift32 伪随机，`setSeed` 可复现同一组粒子；`particles()` 只读暴露池状态，便于单测检查池满、寿命与物理推进，无需窗口。
 
 ### Rect（碰撞工具）
 
@@ -72,7 +81,8 @@ GameEngine/
 ├─ CMakeLists.txt          # 静态库工程定义（target：GameEngine）
 ├─ include/engine/         # 公开头文件（宿主以 "engine/xxx.h" 包含）
 │  ├─ Entity.h             # 实体基类：位置尺寸 / 帧动画（帧区间）/ 三级回退 / 插值快照 / 翻转 / 碰撞盒 / 相机化渲染
-│  ├─ Camera.h             # 2D 相机：世界↔屏幕换算 / 指数平滑跟随 / 世界边界钳制（header-only）
+│  ├─ Camera.h             # 2D 相机：世界↔屏幕换算 / 指数平滑跟随 / 世界边界钳制 / 震屏（header-only）
+│  ├─ ParticleSystem.h     # 固定池矩形粒子：爆发发射 / 寿命重力阻尼 / 相机化半透明绘制
 │  ├─ Scene.h              # 场景基类：五个生命周期回调 + 注入接口
 │  ├─ SceneManager.h       # 场景管理器：唯一所有权 + 延迟切换 + 帧末结算
 │  ├─ UpdateContext.h      # 固定步长世界上下文（dt / 键盘 / 视口 / 输入系统）
@@ -90,6 +100,7 @@ GameEngine/
 │  ├─ Config.cpp           # 逐行解析与坏行容错
 │  ├─ Input.cpp            # 动作绑定与边沿推进（键盘 + 鼠标同路径；update / 注入入口）
 │  ├─ AudioSystem.cpp      # SDL3_mixer 初始化 / 加载 / 播放 / 释放
+│  ├─ ParticleSystem.cpp   # 粒子池发射 / 物理推进 / 矩形淡出绘制 / 状态恢复
 │  └─ Font.cpp             # SDL3_ttf 加载与文本绘制
 ├─ .gitignore              # 忽略构建产物（out/、build/、*.obj 等）
 └─ README.md               # 本文件

@@ -12,7 +12,7 @@ if(NOT TARGET SDL3::SDL3) # 若 SDL3::SDL3 目标不存在（宿主漏配或引�
 endif() # 宿主前置检查结束
 
 # ---------- 引擎静态库目标 ----------
-# 定义静态库 target；收录引擎实现层 6 个 cpp，产出供宿主静态链接的 GameEngine.lib
+# 定义静态库 target；收录引擎实现层 7 个 cpp，产出供宿主静态链接的 GameEngine.lib
 add_library(GameEngine STATIC
   src/SceneManager.cpp # 场景管理器：延迟切换、帧末结算与事件/更新/渲染转发
   src/Font.cpp # 字体系统：TTF 字体加载与中文文本渲染
@@ -20,6 +20,7 @@ add_library(GameEngine STATIC
   src/Config.cpp # 配置解析：config/game.ini 读取与内置默认值回退
   src/Input.cpp # 输入系统：动作映射、改键绑定与边沿检测的采样实现
   src/AudioSystem.cpp # 音效系统：SDL3_mixer 的初始化、加载与播放封装
+  src/ParticleSystem.cpp # 粒子系统：固定池爆发发射、物理推进与矩形半透明绘制
 ) # 静态库源文件清单结束
 
 # 挂载 include 目录为 PUBLIC：宿主与引擎内部统一用 #include "engine/xxx.h" 的写法

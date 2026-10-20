@@ -42,6 +42,15 @@
 //   选指数平滑而非固定速度追赶：公式蕴含 dt，帧率/步长变化下行为一致，
 //   且天然无过冲、无抖动。
 //
+// 震屏（M3·甲：addShake / update / shakeOffset）：
+//   - addShake(振幅像素, 时长秒) 登记一次冲击；振幅随时长线性衰减，偏移
+//     方向由「时间相位」驱动做圆周抖动（|偏移| <= 当前振幅，永不越界）；
+//   - 只作用于渲染路径 worldToScreen——画面/世界随震动抖动；
+//     screenToWorld 刻意不含震屏，鼠标世界瞄准保持稳定（取舍：震屏期间
+//     准星与世界点最多有「当前振幅」的视觉偏差，换取操作不被抖动干扰）；
+//   - update(dt) 由宿主每固定步调用（暂停/冻结时可不调用以冻结震屏）；
+//     表现层抖动不改变 position()，边界钳制/跟随逻辑完全不受影响。
+//
 // 3D 前瞻（本类为何是「通用件」）：
 //   相机本质 = 「世界 -> 屏幕」的坐标变换。当前 2D 版本只有平移；未来 3D
 //   时同一位移将升级为视图矩阵 x 投影矩阵，「实体存世界坐标、绘制处换算」
@@ -119,23 +128,104 @@ public:
                              m_worldHeight, m_viewportHeight); // 纵轴：同上
   }
 
+  // ---- 震屏（渲染层扰动；不影响相机位置/跟随/钳制）----
+
+  // 登记一次震屏：amplitude = 最大偏移长度（像素），duration = 衰减总时长（秒）。
+  // 叠加语义：已有震屏未结束时，只有「新振幅 >= 当前振幅」才覆盖并重新计时；
+  // 更弱的震屏被忽略（避免小抖动打断大冲击），已结束则任何合法值都接受。
+  // 参数非正（无振幅/无时长）视为无效，直接忽略
+  void addShake(float amplitude, float duration)
+  {
+    // 入口防御：非正振幅或时长没有可表达的表现，忽略
+    if (amplitude <= 0.0f || duration <= 0.0f)
+    {
+      return; // 不改变当前震屏状态
+    }
+    // 叠加语义：当前仍在震且新振幅更小 -> 忽略弱震（保住大冲击的主导权）
+    if (m_shakeLeft > 0.0f && amplitude < m_shakeAmplitude)
+    {
+      return; // 弱震不覆盖强震
+    }
+    m_shakeAmplitude = amplitude; // 记录本次振幅（像素）
+    m_shakeDuration = duration;   // 记录本次衰减总时长（秒；比例分母）
+    m_shakeLeft = duration;       // 剩余时长置满（从此刻开始衰减）
+    m_shakeTime = 0.0f;           // 相位归零（抖动的确定性起点）
+  }
+
+  // 推进震屏计时（宿主每固定步调用）：剩余时长递减、相位推进；
+  // 到期后振幅清零（shakeOffset 返回 0）。dt <= 0 不推进（防御调用）
+  void update(float dt)
+  {
+    // 无震屏或非正步长：无需推进
+    if (m_shakeLeft <= 0.0f || dt <= 0.0f)
+    {
+      return; // 保持现状（含「无震屏」的零开销路径）
+    }
+    m_shakeTime += dt;                               // 抖动相位推进（决定偏移方向）
+    m_shakeLeft = std::max(m_shakeLeft - dt, 0.0f);  // 剩余时长递减并夹到 0
+    // 恰好到期：清振幅与分母（之后任何计算都走零偏移分支）
+    if (m_shakeLeft <= 0.0f)
+    {
+      m_shakeAmplitude = 0.0f; // 振幅归零
+      m_shakeDuration = 0.0f;  // 时长归零（防御除零）
+    }
+  }
+
+  // 立即结束震屏（暂停/重开/过场）：状态全清零，下一帧偏移即为 0。
+  // 与 addShake(…, 0) 不同：本方法无条件清掉正在进行的震屏
+  void clearShake()
+  {
+    m_shakeAmplitude = 0.0f; // 振幅清零
+    m_shakeDuration = 0.0f;  // 时长清零
+    m_shakeLeft = 0.0f;      // 剩余时长清零（isShaking -> false）
+    m_shakeTime = 0.0f;      // 相位归零（下次震屏从确定起点开始）
+  }
+
+  // 当前震屏偏移（屏幕像素）：未震屏时为 (0,0)。
+  // 衰减模型 = 振幅 x (剩余时长 / 总时长)（线性）；
+  // 偏移方向 = 相位驱动的单位圆（sin/cos），因此偏移长度恰好等于当前振幅，
+  // 不会出现「斜向偏移比标称振幅更大」的问题
+  Vec2 shakeOffset() const
+  {
+    // 未震屏 / 非法时长：零偏移（渲染路径的常见分支）
+    if (m_shakeLeft <= 0.0f || m_shakeDuration <= 0.0f)
+    {
+      return Vec2{ 0.0f, 0.0f }; // 无抖动
+    }
+    // 线性衰减后的当前振幅（从满振幅平滑收敛到 0）
+    const float amplitude = m_shakeAmplitude * (m_shakeLeft / m_shakeDuration);
+    // 圆周抖动的相位（角速度 55 弧度/秒，约 8.8 圈/秒——短促冲击的观感）
+    const float phase = m_shakeTime * 55.0f;
+    return Vec2{ amplitude * std::sin(phase), // 横向偏移（单位圆 x 分量）
+                 amplitude * std::cos(phase) }; // 纵向偏移（单位圆 y 分量）
+  }
+
+  // 是否正在震屏（渲染/调试查询；不改变状态）
+  bool isShaking() const { return m_shakeLeft > 0.0f; }
+
   // 相机当前左上角位置（世界坐标）。渲染端可用它做可见区域裁剪：
-  // 可见世界矩形 = position() 起、viewportWidth x viewportHeight 大
+  // 可见世界矩形 = position() 起、viewportWidth x viewportHeight 大。
+  // 注意：这里返回逻辑位置，不含震屏偏移（震屏只作用于 worldToScreen）
   Vec2 position() const { return m_position; }
 
   // 世界坐标 -> 屏幕坐标（渲染路径：实体绘制、区块摆放都用它）。
-  // 当前版本为纯平移；将来加入缩放/旋转时只改本方法内部的换算
+  // 当前版本为「纯平移 + 震屏偏移」；将来加入缩放/旋转时只改本方法内部的换算。
+  // 震屏偏移加在最后一步：所有世界层绘制（实体/区块/粒子/飘字）统一跟随抖动
   Vec2 worldToScreen(float worldX, float worldY) const
   {
-    // 屏幕点 = 世界点 - 视口左上角（视口平移量即相机位置）
-    return Vec2{ worldX - m_position.x, worldY - m_position.y };
+    // 当前震屏偏移（未震屏时恒为零向量，无额外分支成本）
+    const Vec2 shake = shakeOffset();
+    // 屏幕点 = 世界点 - 视口左上角 + 震屏偏移
+    return Vec2{ worldX - m_position.x + shake.x, worldY - m_position.y + shake.y };
   }
 
-  // 屏幕坐标 -> 世界坐标（输入路径：鼠标瞄准等）。与 worldToScreen 互逆，
-  // 两者往返（换算再换回）应精确还原（浮点加减的可逆性，有单测覆盖）
+  // 屏幕坐标 -> 世界坐标（输入路径：鼠标瞄准等）。
+  // 刻意不加震屏偏移：瞄准/交互坐标保持稳定——震屏只改变「看到的位置」，
+  // 不改变「点到的位置」（取舍见类头注释）。无震屏时与 worldToScreen 精确互逆；
+  // 震屏期间两者相差当前抖动偏移（这是设计语义，不是误差）
   Vec2 screenToWorld(float screenX, float screenY) const
   {
-    // 世界点 = 屏幕点 + 视口左上角（与 worldToScreen 的减法成逆运算）
+    // 世界点 = 屏幕点 + 视口左上角（与 worldToScreen 的平移部分成逆运算）
     return Vec2{ screenX + m_position.x, screenY + m_position.y };
   }
 
@@ -170,6 +260,14 @@ private:
   float m_viewportHeight = 0.0f; // 视口高（像素）：setViewport 设置
   float m_worldWidth = 0.0f;     // 世界总宽（像素）：setWorldSize 设置
   float m_worldHeight = 0.0f;    // 世界总高（像素）：setWorldSize 设置
+
+  // ---- 震屏状态（渲染层扰动；与相机位置/跟随完全解耦）----
+  // 衰减 = 振幅 x (剩余/总时长)：线性收敛，短促冲击不拖尾。
+  // 偏移方向 = 相位驱动的单位圆，|偏移| <= 当前振幅
+  float m_shakeAmplitude = 0.0f; // 本次震屏的初始振幅（像素；0 = 未震屏）
+  float m_shakeDuration = 0.0f;  // 本次震屏的总时长（秒；比例分母）
+  float m_shakeLeft = 0.0f;      // 剩余时长（秒；<=0 表示震屏结束）
+  float m_shakeTime = 0.0f;      // 已震动的相位时间（秒；决定偏移方向）
 };
 
 #endif // !__CAMERA_H__
